@@ -1,0 +1,281 @@
+---
+title: "GenderInfer"
+author: ""
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{GenderInfer}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+```
+
+```{r setup}
+library(GenderInfer)
+library(dplyr)
+library(ggplot2)
+```
+
+## GenderInfer package
+
+GenderInfer is a package developed to investigate gender differences within a data set.
+This package is based on the work of Dr. [A. Day et al. Chem. Sci., 2020,11, 2277-2301](https://pubs.rsc.org/en/content/articlelanding/2020/sc/c9sc04090k#!divAbstract).
+This has been developed for analysing differences in publishing authorship by gender. 
+This package could also be useful for other analyses where there might be differences
+between male and female percentages from a specified baseline.
+The gender is assigned based on the first name, using the following data set as a corpus:
+https://github.com/OpenGenderTracking/globalnamedata
+The data source take into account data from:
+
+- The United States
+  - Social Security Administration
+- United Kingdom
+  - UK Office of National Statistics
+  - Northern Ireland Statistics and Research Administration
+  - Scotland General Register Office
+
+
+## Example data set
+In this vignette the example data frame `authors` contain random names (first and last
+name for each row), country and publication_years from 2016 to 2020.
+This data set allow us to check the gender difference in the case of submission of articles to a journal.
+
+```{r, warning=FALSE, message=FALSE}
+head(authors)
+```
+
+
+
+## Assign gender based on first name
+
+The function `assign_gender` assigns a plausible gender for each row in the supplied  data frame (`data_df`) 
+based on the values of the first name stored in the column specified by `first_name_col`.
+It creates in output a data frame, similar to the input one, but with a new column containing the variable `gender`, which contains values M (male), F (female) or U (Unknown).
+
+
+```{r, warning=FALSE, message=FALSE}
+authors_df <- assign_gender(data_df = authors, first_name_col = "first_name")
+  
+head(authors_df)
+```
+
+We can now explore how many female, male and unknown there are in the data frame, using the function `count` from `dplyr` package.
+
+```{r, warning=FALSE, message=FALSE}
+## Count how many female, male and unknown gender there are in the data
+authors_df %>% count(gender)
+
+## per gender and country
+authors_df %>% count(gender, country_code)
+
+```
+
+## Calculate baseline and plot basic chart.
+
+`GenderInfer` calculates the female baseline using the function `baseline`, which will be used for further statistical calculation and for the graphics. 
+The baseline female percentage  is calculated by: \
+
+$$baseline = \frac{Female}{Female + Male} $$ \
+
+Note that the Unknown totals are omitted when calculating any percentages (for baselines and any female percentage comparison with it) by this methodology as discussed in the paper . 
+The analysis compares the female percentage of various sub-populations with this baseline in order to find those there the difference is significant. 
+It is also possible to calculate the baseline for different level, such as year or 
+country, or another variables. The level represents the variable we want to use to make the comparison.
+
+In the following case we calculate the baseline for the year range 2016-2019
+to compare with 2020 for the whole data set.
+
+```{r,  warning=FALSE, message=FALSE}
+## calculates baseline for the year range 2016-2019
+baseline_female <- baseline(data_df = authors_df %>% 
+                              filter(publication_years %in% seq(2016, 2019)),
+                            gender_col = "gender")
+baseline_female
+
+```
+
+## Create a simple bar chart showing the number of male and female.
+
+The package has the function `calculate_binom_baseline`, which applies the binomial
+test where the number of female is the number of success in a Bernoulli experiment 
+and it uses the baseline value as expected probability of success. 
+This function finds if there is any statistical significance in the difference 
+between female and male. Before the binomial is calculated the input data frame
+is reshaped in a new data form.
+
+In first instance we calculate the count of female for the 2020.
+The variable we want to make the comparison in this case is `publication_years`. 
+This variable will allow a comparison with the previous year range.
+In the present package we call `level` the variable used for comparison.
+The function `reshape_for_binomial` creates a new input data frame containing the female and male percentage, the total for level (`total_for_level`), which is the sum of female, male and unknown and the sum of female and male (`total_female_male`).
+
+
+```{r}
+## Create a data frame that containing only the data from 2020 and
+## the count of the variable gender.
+female_count_2020 <- authors_df %>% 
+  filter(publication_years == 2020) %>%
+  count(gender)
+
+## create a new data frame to be used for the binomial calculation.
+df_gender <- reshape_for_binomials(data = female_count_2020,
+                                   gender_col = "gender",
+                                   level = 2020)
+#df_gender <- test(female_count_2020, "gender", 2020)
+
+df_gender
+```
+
+The function `calculate_binomial_baseline` calculates also the lower CI, upper CI and significance. 
+The default value of the confidence level is 0.95.
+Before plotting the results, the function `gender_total_df` pivots the data in longer format,
+which means that the data frame now has more rows and less columns by creating a coloumn
+`gender` that contains the values for female, male and unknown.
+The function `gender_bar_chart` creates a bar chart showing the number of female, male and unknown.
+
+```{r, fig.width=6, fig.height=4}
+## Calculate the binomial
+## Create a new column with the baseline and calculate the binomial.
+
+df_gender <- calculate_binom_baseline(data_df = df_gender,
+                                      baseline_female = baseline_female)
+
+df_gender
+
+## Reshape first the dataframe using `gender_total_df` and afterwards create a
+## bar chart of showing the number of male, female and unknown gender with `gender_bar_chart`
+gender_total <- total_gender_df(data_df = df_gender, level = "level")
+
+bar_chart(data_df = gender_total, x_label = "Year", 
+                 y_label = "Total number")
+
+```
+
+## Create barchart with significance bar and baseline.
+
+The function `stacked_bar_chart` create a stacked bar chart using the percentage.
+This chart shows information about the baseline and the percentage of males and females.
+
+```{r, fig.width=6}
+## reshape the dataframe using the function `percent_df`.
+## Add to `stacked_bar_chart` coord_flip() from ggplot2 to invert the xy axis.
+# percent_df(data_df = df_gender)
+percent_data <- percent_df(data_df = df_gender) 
+stacked_bar_chart(percent_data, baseline_female = baseline_female,
+                    x_label = "Year", y_label = "Percentage of authors",
+                    baseline_label = "Female baseline 2016-2019:") +
+  coord_flip() 
+ 
+
+```
+
+
+## Multibaseline analysis
+
+We can now see how to calculate the baseline for several levels of the same variable
+and how to generate the graphics.
+In the example below we use the function `sapply` to generate the baselines value for `c("UK", "US")`.
+This generates a numeric vector containing two values, one for "US" and the second for "UK".
+As before we now reshape the data with the function `reshape_for_binomials` and afterwards we apply
+the `calcultate_binom_baseline`.
+
+```{r}
+## calculate binomials for us and uk. 
+## Reshape the dataframe and filter it country UK and US and year 2020 and count
+## gender per countries.
+# as.data.frame(t(with(authors_df, tapply(n, list(gender), c))))
+
+UK_US_df <- reshape_for_binomials(data_df = authors_df %>%
+                                   filter(country_code %in% c("UK", "US"),
+                                          publication_years == 2020) %>%
+                                    count(gender, country_code),
+                                 gender_col = "gender", level = "country_code")
+
+## To calculate the baseline for each country we can use the function `sapply`
+baseline_uk_us <- sapply(UK_US_df$level, function(x) {
+  baseline(data_df = authors_df %>%
+            filter(country_code %in% x, publication_years %in% seq(2016, 2019)),
+           gender_col = "gender")
+})
+
+baseline_uk_us
+
+UK_US_binom <- calculate_binom_baseline(data_df = UK_US_df,
+                                        baseline_female = baseline_uk_us)
+
+UK_US_binom
+```
+
+A bullet chart displays the baseline and the female and male percentage for US and UK
+
+```{r, fig.width=6, fig.height=4}
+percent_uk_us <- percent_df(UK_US_binom)
+
+bullet_chart <- bullet_chart(data_df = percent_uk_us,
+                             baseline_female = baseline_uk_us,
+                             x_label = "Countries", y_label = "% Authors",
+                             baseline_label = "Female baseline for 2016-2019")
+bullet_chart
+```
+
+With the `GenderInfer` package it is possible to create a bullet chart with line chart in the same graph.
+The bullet chart in this example shows the difference for UK for the year range 2017-2020. 
+Each bar will show the baseline for the previous year
+
+
+
+```{r}
+## calculate binomials for US and UK
+
+UK_df <- reshape_for_binomials(data_df = authors_df %>%
+                                     filter(country_code == "UK") %>% 
+                                     count(gender, publication_years),
+                               "gender", "publication_years")
+
+UK_df
+
+## create a baseline vector containing values for each year from 2016 to 2020.
+## using as country to compare France.
+baseline_fr <- sapply(seq(2016, 2020), function(x) {
+  baseline(data_df = authors_df %>%
+             filter(country_code == "FR", publication_years %in% x), 
+           gender_col = "gender")
+})
+baseline_fr
+
+UK_binom <- calculate_binom_baseline(UK_df, baseline_female = baseline_fr)
+UK_binom
+```
+
+The line chart on the top of the bullet chart is the total number of gender in this case per year.
+
+```{r, fig.width=7, fig.height=5}
+## Calculate the total number of submission per country and per year
+percent_uk <- percent_df(UK_binom)
+## calculate the number of submission from UK
+total_uk <- authors_df %>%
+  filter(country_code == "UK") %>%
+  count(publication_years) %>%
+  mutate(x_values = factor(publication_years,
+                                    levels = publication_years))
+## conversion factor to create the second y-axis
+c <- min(total_uk$n) / 100
+bullet_line_chart(data_df = percent_uk, baseline_female = baseline_fr,
+                  x_label = "year", y_bullet_chart_label = "Authors submission (%)",
+                  baseline_label = "French Female baseline",
+                  line_chart_df = total_uk,
+                  line_chart_scaling = c, y_line_chart_label = "Total number",
+                  line_label = "Total submission UK")
+```
+
+
+
+
+
